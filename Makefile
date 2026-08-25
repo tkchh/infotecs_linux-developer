@@ -1,4 +1,4 @@
-obj-m += hello-2.o
+obj-m += hello_module.o
 
 PWD := $(CURDIR)
 
