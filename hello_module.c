@@ -7,23 +7,21 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("TKCHH");
 MODULE_DESCRIPTION("Writing module in file with timer");
 
-#define PERIOD HZ/5
-
+static int period_sec = 5;
 static struct timer_list my_timer;
 
 static void my_timer_func(struct timer_list *unused) {
     pr_info("Thats from timer:)");
 
-    my_timer.expires = jiffies + PERIOD;
-    add_timer(&my_timer);
+    mod_timer(&my_timer, jiffies + msecs_to_jiffies(period_sec * 1000));
 }
 
 static int __init hello_2_init(void) {
     pr_info("Hello, world 2!\n");
 
     timer_setup(&my_timer, my_timer_func, 0);
-    my_timer.expires = jiffies + PERIOD;
-    add_timer(&my_timer);
+
+    mod_timer(&my_timer, jiffies + msecs_to_jiffies(period_sec * 1000));
 
     return 0;
 }
