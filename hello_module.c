@@ -1,5 +1,6 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/limits.h>
 #include <linux/module.h>
 #include <linux/jiffies.h>
 #include <linux/fs.h>
@@ -8,6 +9,7 @@
 #include <linux/sysfs.h>
 #include <linux/kobject.h>
 #include <linux/mutex.h>
+#include <linux/slab.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("TKCHH");
@@ -25,7 +27,7 @@ static struct kobject *hellomodule;
 static DEFINE_MUTEX(config_mutex);
 
 static int period_sec = DEFAULT_PERIOD_SEC;
-static char *target_file = DEFAULT_TARGET_FILE;
+static char *target_file = NULL;
 
 
 static struct timer_list my_timer;
@@ -65,11 +67,71 @@ static ssize_t period_store(struct kobject *kobj, struct kobj_attribute *attr, c
 
 static struct kobj_attribute period_attribute = __ATTR(period_sec, 0660, period_show, period_store);
 
-//Чтение/изменение файла для записи
+//Чтение/изменение файла для записи target_file
 
 static ssize_t target_file_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf){
-    return 0;
+    ssize_t len;
+
+    mutex_lock(&config_mutex);
+
+    if (!target_file) {
+        mutex_unlock(&config_mutex);
+        return sprintf(buf, "(null)\n");
+    }
+
+    len = sprintf(buf, "%s\n", target_file);
+    mutex_unlock(&config_mutex);
+
+    return len;
 }
+
+static ssize_t target_file_store(struct kobject *kobj, struct kobj_attribute *attr, const char *buf, size_t count){
+    char *new_path = NULL;
+    char *old_path = NULL;
+    size_t len;
+
+    if (count == 0) {
+        pr_err("Empty path not allowed\n");
+        return -EINVAL;
+    }
+
+    if (count > PATH_MAX) {
+        pr_err("Path too long (max length %d)\n", PATH_MAX);
+        return -ENAMETOOLONG;
+    }
+
+    len = count;
+    if (buf[len - 1] == '\n'){
+        len--;
+    }
+
+    if (len == 0){
+        pr_err("Path is empty after removing newline\n");
+        return -EINVAL;
+    }
+
+    new_path = kmalloc(len+1, GFP_KERNEL);
+    if (!new_path) {
+        pr_err("Failed to allocate mem for path\n");
+        return -ENOMEM;
+    }
+
+    memcpy(new_path, buf, len);
+    new_path[len] = '\0';
+
+    mutex_lock(&config_mutex);
+    old_path = target_file;
+    target_file = new_path;
+    mutex_unlock(&config_mutex);
+
+    kfree(old_path);
+
+    pr_info("Target file changed to: %s\n", new_path);
+
+    return count;
+}
+
+static struct kobj_attribute target_file_attr = __ATTR(target_file, 0660, target_file_show, target_file_store);
 
 static void write_work_func(struct work_struct *work){
     struct file *file = NULL;
@@ -103,7 +165,14 @@ static void my_timer_func(struct timer_list *unused) {
 static int __init hello_init(void) {
     int error = 0;
 
-    pr_info("Загружен модуль. Период: %d сек, файл: %s\n", period_sec, target_file);
+
+    target_file = kstrdup(DEFAULT_TARGET_FILE, GFP_KERNEL);
+    if (!target_file){
+        pr_err("Failed to allocate target_file\n");
+        return -ENOMEM;
+    }
+    pr_info("Загружен модуль. Период: %d сек, Файл: %s\n", period_sec, target_file);
+
 
     hellomodule = kobject_create_and_add("hello_module", kernel_kobj);
     if (!hellomodule)
@@ -113,6 +182,12 @@ static int __init hello_init(void) {
     if (error) {
         kobject_put(hellomodule);
         pr_info("failed to create the period file in /sys/kernel/hello_module");
+    }
+
+    error = sysfs_create_file(hellomodule, &target_file_attr.attr);
+    if (error) {
+        kobject_put(hellomodule);
+        pr_info("failed to create the target_file file in /sys/kernel/hello_module");
     }
 
     INIT_WORK(&write_work, write_work_func);
@@ -130,6 +205,8 @@ static void __exit hello_exit(void) {
     del_timer_sync(&my_timer);
 
     cancel_work_sync(&write_work);
+
+    kfree(target_file);
 
     pr_info("Модуль отключен!\n");
 }
