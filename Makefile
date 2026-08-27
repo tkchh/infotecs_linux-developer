@@ -1,9 +1,19 @@
-obj-m += hello_module.o
+all: module helloctl
 
-PWD := $(CURDIR)
+helloctl:
+	$(MAKE) -C helloctl
 
-all:
-	make -C /lib/modules/5.10.265-0510265-generic/build M=$(PWD) modules
+module:
+	$(MAKE) -C module
+
+load: module
+	sudo insmod module/hello_module.ko
+
+unload:
+	sudo rmmod hello_module
 
 clean:
-	make -C /lib/modules/5.10.265-0510265-generic/build M=$(PWD) clean
+	$(MAKE) -C module clean
+	$(MAKE) -C helloctl clean
+
+.PHONY: all module helloctl load unload clean
